@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQuer
 # --- CONFIGURACIÓN DE SERVIDOR ---
 app = Flask('')
 @app.route('/')
-def home(): return "Analista Pro V4 - Goles y Doble Oportunidad"
+def home(): return "Analista Pro V4 Online"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -19,7 +19,7 @@ class SportsAnalystProV4:
     def __init__(self):
         self.token = os.environ.get('TELEGRAM_TOKEN')
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0',
             'Referer': 'https://www.sofascore.com/'
         }
 
@@ -38,7 +38,6 @@ class SportsAnalystProV4:
                     c = m.get('choices', [])
                     data["1X2"] = {"1": float(c[0]['fractionalValue']), "X": float(c[1]['fractionalValue']), "2": float(c[2]['fractionalValue'])}
                 if m.get('marketName') == 'Total':
-                    # Buscamos la línea estándar de 2.5 goles
                     for choice in m.get('choices', []):
                         if choice.get('name') == 'Over 2.5':
                             data["Goles"] = float(choice.get('fractionalValue'))
@@ -46,67 +45,43 @@ class SportsAnalystProV4:
         except: return None
 
     def generar_reporte(self, home, away, odds_data, h2h):
-        ahora = datetime.now().strftime('%H:%M:%S')
         odds = odds_data.get("1X2")
         goles_over = odds_data.get("Goles", "-")
-        
-        # Cálculo de Probabilidades
         p_home, p_draw, p_away = 0, 0, 0
         if odds:
             p1, pX, p2 = 1/odds['1'], 1/odds['X'], 1/odds['2']
             t = p1 + pX + p2
             p_home, p_draw, p_away = (p1/t)*100, (pX/t)*100, (p2/t)*100
 
-        # Doble Oportunidad (Suma de probabilidades)
         dc_1x = round(p_home + p_draw)
         dc_x2 = round(p_draw + p_away)
 
         return (
             f"🏟️ **ANÁLISIS PRO: {home} vs {away}**\n"
-            f"🕒 {ahora} | 📅 27/01/2026\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🛡️ **DOBLE OPORTUNIDAD (Probabilidad):**\n"
-            f"• {home} o Empate (1X): `{dc_1x}%` ✅\n"
-            f"• {away} o Empate (X2): `{dc_x2}%` 🚀\n\n"
-            f"⚽ **TOTAL DE GOLES:**\n"
-            f"• Más de 2.5 Goles: `{goles_over}`\n"
-            f"• Tendencia: {'Alta 📈' if (goles_over != '-' and goles_over < 2.0) else 'Moderada 📉'}\n\n"
-            f"📊 **1X2 REAL (SofaScore):**\n"
-            f"🏠 `{round(p_home)}%` | ➖ `{round(p_draw)}%` | 🚀 `{round(p_away)}%` \n\n"
-            f"⚔️ **H2H:** {h2h['home'] if h2h else 0}V - {h2h['draws'] if h2h else 0}E - {h2h['away'] if h2h else 0}V\n"
+            f"🛡️ **DOBLE OPORTUNIDAD:**\n"
+            f"• 1X: `{dc_1x}%` | • X2: `{dc_x2}%` \n\n"
+            f"⚽ **GOLES (Over 2.5):** `{goles_over}`\n\n"
+            f"📊 **1X2 REAL:**\n"
+            f"🏠 `{round(p_home)}%` | ➖ `{round(p_draw)}%` | 🚀 `{round(p_away)}%` \n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("⚽ **Analista Nivel 4 Activo**\nUsa `/analisis [equipo]` para ver cuotas de goles y doble oportunidad.")
+        await update.message.reply_text("🚀 **¡BOT ACTIVO!**\nUsa `/analisis [equipo]` para empezar.")
 
     async def analisis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = " ".join(context.args)
-        if not query: return await update.message.reply_text("❌ Indica el equipo.")
-        msj = await update.message.reply_text(f"📡 Extrayendo mercados de {query}...")
+        if not query: return await update.message.reply_text("❌ Escribe un equipo.")
+        msj = await update.message.reply_text(f"📡 Analizando {query}...")
         try:
             r = requests.get(f"https://api.sofascore.com/api/v1/search/all?q={query}&type=event", headers=self.headers).json()
-            events = [res for res in r.get('results', []) if res.get('type') == 'event']
-            if not events: return await msj.edit_text("❌ Partido no encontrado.")
-            
-            m = events[0]['entity']
+            m = r['results'][0]['entity']
             m_id, home, away = m['id'], m['homeTeam']['name'], m['awayTeam']['name']
-            
             odds_data = await self.get_real_odds(m_id)
             h2h = await self.get_h2h_data(m_id)
-            
-            await msj.edit_text(self.generar_reporte(home, away, odds_data, h2h), parse_mode='Markdown', 
-                               reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refrescar Pronóstico", callback_data=f"upd_{m_id}_{home}_{away}")]]))
-        except Exception as e: await msj.edit_text(f"⚠️ Error: {str(e)}")
-
-    async def refresh(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        q = update.callback_query
-        await q.answer("Actualizando mercados...")
-        _, m_id, home, away = q.data.split("_")
-        odds_data = await self.get_real_odds(m_id)
-        h2h = await self.get_h2h_data(m_id)
-        await q.edit_message_text(self.generar_reporte(home, away, odds_data, h2h), parse_mode='Markdown', 
-                                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refrescar Pronóstico", callback_data=q.data)]]))
+            await msj.edit_text(self.generar_reporte(home, away, odds_data, h2h), parse_mode='Markdown')
+        except: await msj.edit_text("❌ No encontré el partido.")
 
 if __name__ == '__main__':
     Thread(target=run_flask).start()
@@ -114,5 +89,4 @@ if __name__ == '__main__':
     app_tg = Application.builder().token(bot.token).build()
     app_tg.add_handler(CommandHandler("start", bot.start))
     app_tg.add_handler(CommandHandler("analisis", bot.analisis))
-    app_tg.add_handler(CallbackQueryHandler(bot.refresh))
     app_tg.run_polling()
